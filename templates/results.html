@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Result</title>
+</head>
+<body class="bg-gray-800 h-screen flex items-center justify-center">
+ 
+    <div class="flex flex-col justify-center items-center">
+        <h2 class="text-gray-500 text-2xl">Processing Complete</h2>
+
+        <a class="rounded-md bg-pink-500 py-2 px-4 text-white" href="{% url 'download_file' output_file %}">Download main2.txt</a>
+    </div>
+
+</body>
+</html>

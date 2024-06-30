@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Upload File</title>
+</head>
+<body class="bg-gray-800 h-screen flex items-center justify-center">
+
+    <div class="bg-gray-700 rounded-md p-5 text-gray-500">
+
+    <h2 class="text-2xl text-center my-5">Upload main.txt</h2>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="file" name="file" required>
+        <button class="bg-pink-500 rounded-md text-white py-2 px-4" type="submit">Upload</button>
+    </form>
+
+</div>
+
+</body>
+</html>
