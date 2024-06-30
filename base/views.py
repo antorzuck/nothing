@@ -6,10 +6,14 @@ from django.core.files.storage import FileSystemStorage
 from django.http import HttpResponse
 from django.shortcuts import render
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
+from tqdm import tqdm
 
 def get_sui_address_from_seed(seed_phrase):
     try:
+        # Generate seed from BIP39 mnemonic
         seed_bytes = Bip39SeedGenerator(seed_phrase).Generate()
+
+        # Derive Sui address from the seed
         bip44_mst = Bip44.FromSeed(seed_bytes, Bip44Coins.SUI)
         bip44_acc = bip44_mst.Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
         return bip44_acc.PublicKey().ToAddress()
@@ -48,19 +52,23 @@ def process_seed_phrases_and_fetch_balances(input_path, output_path, api_key):
 
     print("Processing seed phrases and fetching balances...")
     with open(output_path, 'w') as file:
-        for seed_phrase in seed_phrases:
+        for seed_phrase in tqdm(seed_phrases, desc="Progress", unit="phrase"):
             seed_phrase = seed_phrase.strip()
             if seed_phrase:
+                print(f"Processing seed phrase: {seed_phrase}")
                 address = get_sui_address_from_seed(seed_phrase)
                 if address:
+                    print(f"Generated address: {address}")
                     total_checked += 1
                     balance_info = get_balance(address, api_key)
-                    if balance_info is not None and isinstance(balance_info, dict):
-                        balance = balance_info.get("balance", "[]")
-                        file.write(f"{balance}    {seed_phrase}\n")
+                    if balance_info is not None:
+                        print(f"Fetched balance for address {address}: {balance_info}")
+                        file.write(f"{balance_info}\n")
                         total_saved += 1
                     else:
-                        file.write(f"[]    {seed_phrase}\n")
+                        print(f"Failed to fetch balance for address: {address}")
+                else:
+                    print(f"Failed to generate address for seed phrase: {seed_phrase}")
 
     print(f"Total balances checked: {total_checked}")
     print(f"Total balances saved: {total_saved}")
