@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import os
+from gi.repository import IBus, GLib, GObject
+
+# Corrected and complete Avro-style phonetic mapping
+CONSONANTS = {
+    'k': 'ক', 'kh': 'খ', 'g': 'গ', 'gh': 'ঘ', 'Ng': 'ঙ',
+    'c': 'চ', 'ch': 'ছ', 'j': 'জ', 'jh': 'ঝ', 'ny': 'ঞ',
+    'T': 'ট', 'Th': 'ঠ', 'D': 'ড', 'Dh': 'ঢ', 'N': 'ণ',
+    't': 'ত', 'th': 'থ', 'd': 'দ', 'dh': 'ধ', 'n': 'ন',
+    'p': 'প', 'f': 'ফ', 'b': 'ব', 'bh': 'ভ', 'm': 'ম',
+    'z': 'য', 'r': 'র', 'l': 'ল', 'sh': 'শ', 'S': 'ষ', 's': 'স',
+    'h': 'হ', 'R': 'ড়', 'Rh': 'ঢ়', 'y': 'য়', 'w': '্ব',
+    'x': 'ক্স', 'v': 'ভ', 'Z' : '্য', 'rr':'র্', 'bd': 'ব্দ', 'ng':'ং',
+    ':' : 'ঃ', 'Q': 'ঁ',  '.' : '।', 'fr' : 'ফ্র', 'tr':'ত্র'
+}
+
+VOWELS = {
+    'o':'অ', 'a': 'আ', 'i': 'ই', 'ii': 'ঈ', 'u': 'উ', 'OU': 'ঊ',
+    'ri': 'ঋ', 'e': 'এ', 'OI': 'ঐ', 'O': 'ও', 'OII': 'ঔ'
+}
+
+KAR = {
+    'a': 'া',
+    'i': 'ি',
+    'ii': 'ী',
+    'u': 'ু',
+    'uu': 'ূ',
+    'ri': 'ৃ',
+    'e': 'ে',
+    'OI': 'ৈ',
+    'O': 'ো',
+    'OU': 'ৌ',
+    'o' : ''
+   
+}
+
+NUMBERS = {str(i): chr(0x09E6 + i) for i in range(10)}
+
+HASANTA = '্'
+ANUSVARA = 'ং'
+BISARGA = 'ঃ'
+CHANDRABINDU = 'ঁ'
+
+# Complex conjuncts (longest first!)
+CONJUNCTS = [
+    ('kkh', 'ক্ষ'), ('kkhn', 'ক্ষ্ণ'), ('kkhm', 'ক্ষ্ম'),
+    ('jJ', 'জ্ঞ'),
+    ('shch', 'শ্চ'), ('ShTh', 'ষ্ঠ'), ('ShT', 'ষ্ট'),
+    ('chch', 'চ্চ'), ('cch', 'চ্ছ'),
+    ('jj', 'জ্জ'), ('jjh', 'জ্ঝ'),
+    ('kk', 'ক্ক'), ('kT', 'ক্ট'), ('kt', 'ক্ত'), ('ktr', 'ক্ত্র'),
+    ('ngk', 'ঙ্ক'), ('ngkh', 'ঙ্খ'), ('ngg', 'ঙ্গ'), ('nggh', 'ঙ্ঘ'),
+    ('nch', 'ঞ্চ'), ('nCh', 'ঞ্ছ'), ('nj', 'ঞ্জ'), ('njh', 'ঞ্ঝ'),
+    ('TT', 'ট্ট'), ('TTh', 'ট্ঠ'), ('DD', 'ড্ড'), ('DDh', 'ড্ঢ'),
+    ('tt', 'ত্ত'), ('tth', 'ত্থ'), ('dd', 'দ্দ'), ('ddh', 'দ্ধ'),
+    ('nd', 'ন্দ'), ('ndh', 'ন্ধ'), ('nt', 'ন্ত'), ('nth', 'ন্থ'),
+    ('nm', 'ন্ম'), ('nb', 'ন্ব'), ('ny', 'ন্য'), ('nr', 'ন্র'),
+    ('pp', 'প্প'), ('pph', 'প্ফ'), ('pr', 'প্র'),
+    ('br', 'ব্র'), ('bl', 'ব্ল'), ('bh', 'ভ'),
+    ('shT', 'শ্ট'), ('shTh', 'শ্ঠ'), ('shch', 'শ্চ'),
+    ('shr', 'শ্র'), ('shl', 'শ্ল'), ('shm', 'শ্ম'), ('shn', 'শ্ন'),
+    ('st', 'স্ত'), ('sth', 'স্থ'), ('sp', 'স্প'), ('sk', 'স্ক'),
+    ('hr', 'হ্র'), ('hl', 'হ্ল'), ('hm', 'হ্ম'), ('mp', 'ম্প')
+]
+
+# Normalize input: use consistent casing (Avro uses lowercase mostly)
+# But we'll allow mixed for robustness
+def normalize_input(text):
+    # Avro uses 'T', 'D', 'N', 'R', 'S' for retroflexes
+    return text
+
+def phonetic_to_bangla(text):
+    if not text:
+        return ""
+    
+    result = []
+    i = 0
+    n = len(text)
+    
+    while i < n:
+        # Try longest match first (for conjuncts & multi-char)
+        matched = False
+        
+        # Check for conjuncts (e.g., kkh, str, etc.)
+        
+        for length in range(min(6, n - i), 1, -1):
+            substr = text[i:i+length]
+            found = False
+            for conj, bangla in CONJUNCTS:
+                if substr == conj:
+                #new code start here
+                    j = i + length
+                    vowel_found = False
+                    
+                    for vlen in range(3, 0, -1):
+                        if j + vlen <= n:
+                            v_substr = text[j:j+vlen]
+                            if v_substr in KAR:
+                                kar = KAR[v_substr]
+                                if kar:
+                                    result.append(bangla + kar)
+                                else:
+                                    result.append(bangla)
+                                i = j + vlen
+                                matched = True
+                                vowel_found = True
+                                break
+                    if not vowel_found:
+                        result.append(bangla)
+                        i += length
+                        matched = True
+                    break
+            if matched:
+                break
+        
+        
+        # Check consonant
+        for length in range(min(3, n - i), 0, -1):
+            substr = text[i:i+length]
+            if substr in CONSONANTS:
+                consonant = CONSONANTS[substr]
+                j = i + length
+                
+                # Look ahead for vowel (kar)
+                vowel_found = False
+                for vlen in range(3, 0, -1):
+                    if j + vlen <= n:
+                        v_substr = text[j:j+vlen]
+                        if v_substr in KAR:
+                            kar = KAR[v_substr]
+                            if kar:  # non-empty kar (like 'ি', 'া')
+                                result.append(consonant + kar)
+                            else:  # 'a' → inherent vowel → just consonant
+                                result.append(consonant)
+                            i = j + vlen
+                            vowel_found = True
+                            matched = True
+                            break
+                
+                if not vowel_found:
+                    # No vowel → inherent 'অ'
+                    result.append(consonant)
+                    i += length
+                    matched = True
+                break
+        
+        if matched:
+            continue
+        
+        # Check standalone vowel (at word start)
+        for length in range(3, 0, -1):
+            if i + length <= n:
+                substr = text[i:i+length]
+                if substr in VOWELS:
+                    result.append(VOWELS[substr])
+                    i += length
+                    matched = True
+                    break
+        
+        if matched:
+            continue
+        
+        # Numbers & specials
+        if text[i] in NUMBERS:
+            result.append(NUMBERS[text[i]])
+            i += 1
+        elif text[i] == 'q':  # explicit hasanta
+            if result:  # only add hasanta after a consonant
+                result[-1] += HASANTA
+            i += 1
+        else:
+            result.append(text[i])  # fallback
+            i += 1
+    
+    return ''.join(result)
+class BanglaEngine(IBus.Engine):
+    __gtype_name__ = 'BanglaEngine'
+
+    def __init__(self):
+        super().__init__()
+        self.preedit_string = ""
+        self.lookup_table = IBus.LookupTable.new(10, 0, True, True)
+        self.lookup_table.set_orientation(IBus.Orientation.HORIZONTAL)
+        
+    def do_process_key_event(self, keyval, keycode, state):
+        if state & IBus.ModifierType.RELEASE_MASK:
+            return False
+            
+        if state & (IBus.ModifierType.CONTROL_MASK |
+                IBus.ModifierType.MOD1_MASK |      # Alt
+                IBus.ModifierType.SUPER_MASK |
+                IBus.ModifierType.HYPER_MASK |
+                IBus.ModifierType.META_MASK):
+            return False
+            
+            
+        if IBus.KEY_1 <= keyval <= IBus.KEY_9:
+            index = keyval - IBus.KEY_1  # 0 to 8
+            if index < self.lookup_table.get_number_of_candidates():
+                candidate = self.lookup_table.get_candidate(index)
+                self.commit_text(candidate)
+                self.preedit_string = ""
+                self.update_preedit()
+                return True
+
+        elif keyval == IBus.KEY_0:
+            index = 9
+            if index < self.lookup_table.get_number_of_candidates():
+                candidate = self.lookup_table.get_candidate(index)
+                self.commit_text(candidate)
+                self.preedit_string = ""
+                self.update_preedit()
+                return True
+
+        # Commit on Enter
+        if keyval in (IBus.KEY_Return, IBus.KEY_KP_Enter):
+            if self.preedit_string:
+                self.commit_text(IBus.Text.new_from_string(
+                    phonetic_to_bangla(self.preedit_string)))
+                self.preedit_string = ""
+                self.update_preedit()
+                return True
+            return False
+
+        # Cancel on Escape
+        elif keyval == IBus.KEY_Escape:
+            if self.preedit_string:
+                self.preedit_string = ""
+                self.update_preedit()
+                return True
+            return False
+
+        # Backspace
+        elif keyval == IBus.KEY_BackSpace:
+            if self.preedit_string:
+                self.preedit_string = self.preedit_string[:-1]
+                self.update_preedit()
+                return True
+            return False
+
+        # Space commits with space
+        elif keyval == IBus.KEY_space:
+            if self.preedit_string:
+                self.commit_text(IBus.Text.new_from_string(
+                    phonetic_to_bangla(self.preedit_string) + " "))
+                self.preedit_string = ""
+                self.update_preedit()
+                return True
+            else:
+                self.commit_text(IBus.Text.new_from_string(" "))
+                return True
+
+        # Printable ASCII
+        elif 32 <= keyval <= 126:
+            char = chr(keyval)
+            self.preedit_string += char
+            self.update_preedit()
+            return True
+
+        return False
+        
+        
+        
+    def get_suggestions(self, text):
+        base = phonetic_to_bangla(text)
+        if not base:
+            return []
+    
+        suggestions = [base]
+    
+   
+        word_suggestions = {
+    # Single letters (common typing)
+    "a": ["আ", "অ"],
+    "i": ["ই", "ঈ", "ঈশ্বর"],
+    "u": ["উ", "ঊ"],
+    "e": ["এ", "ঐ"],
+    "o": ["ও", "অ"],
+    "k": ["ক", "কে", "কী"],
+    "t": ["টি", "তা", "তুমি"],
+    "b": ["ব", "বই", "বন্ধু"],
+    "m": ["মা", "মামা", "মনে"],
+    "r": ["র", "রাম", "রাজা"],
+
+    # Pronouns
+    "ami": ["আমি", "আমিই", "আমারে"],
+    "amar": ["আমার", "আমরা", "আমারে"],
+    "amra": ["আমরা", "আমাদের"],
+    "tumi": ["তুমি", "তোমরা", "তোমিই"],
+    "tomar": ["তোমার", "তোমারে"],
+    "se": ["সে", "শে", "সেই"],
+    "tar": ["তার", "তাদের", "তাহার"],
+    "uni": ["উনি", "উনার", "উনিই"],
+    "apni": ["আপনি", "আপনার", "আপনিই"],
+    "ora": ["ওরা", "ওদের", "ওরাই"],
+    "amader": ["আমাদের", "আমাদেরকে"],
+    "tomader": ["তোমাদের", "তোমাদেরকে"],
+
+    # Greetings
+    "hello": ["হ্যালো", "হেলো"],
+    "hi": ["হাই", "হ্যালো"],
+    "assalamu": ["আসসালামু", "আসসালামু আলাইকুম"],
+    "salam": ["সালাম", "সালামালাইকুম"],
+    "namaskar": ["নমস্কার", "নমস্তে"],
+    "nomoskar": ["নমস্কার", "নমস্তে"],
+    "shuvo": ["শুভ", "শুভেচ্ছা", "শুভ সকাল"],
+    "subho": ["শুভ", "শুভ রাত্রি"],
+
+    # Common words
+    "bhalo": ["ভালো", "ভালোবাসা", "ভালো আছো?"],
+    "valo": ["ভালো", "ভালবাসা"],
+    "bhalobasha": ["ভালোবাসা", "ভালবাসা"],
+    "dhonnobad": ["ধন্যবাদ", "অসংখ্য ধন্যবাদ"],
+    "thanks": ["ধন্যবাদ", "অসংখ্য ধন্যবাদ"],
+    "ki": ["কি", "কী", "কি ব্যাপার?"],
+    "kothay": ["কোথায়", "কোথায় আছো?", "কোথায় যাচ্ছো?"],
+    "kemon": ["কেমন", "কেমন আছো?", "কেমন আছেন?"],
+    "valo": ["ভালো", "ভালোবাসা"],
+    "thik": ["ঠিক", "ঠিক আছে", "ঠিক আছে না"],
+    "hmm": ["হুম", "হ্যাঁ", "হুমম"],
+    "na": ["না", "নাহ", "নাই"],
+    "ha": ["হ্যাঁ", "হ্যা", "হুম"],
+    "hoi": ["হয়", "হই", "হইছে"],
+    "hobe": ["হবে", "হইবে"],
+    "ache": ["আছে", "আছো", "আছি"],
+    "chilam": ["ছিলাম", "ছিলো", "ছিলাম না"],
+
+    # Feelings
+    "doya": ["দয়া", "দোয়া", "দয়া করে"],
+    "mon": ["মন", "মনে", "মনের কথা"],
+    "khushi": ["খুশি", "আনন্দ", "সুখী"],
+    "kosto": ["কষ্ট", "দুঃখ", "যন্ত্রণা"],
+    "dukho": ["দুঃখ", "দুখ", "বেদনা"],
+    "birokto": ["বিরক্ত", "বিরক্তিকর"],
+    "rag": ["রাগ", "রাগান্বিত", "রাগ হচ্ছে"],
+
+    # Questions
+    "kemonacho": ["কেমন আছো?", "কেমন আছেন?"],
+    "ki korcho": ["কি করছো?", "কি করছিস?"],
+    "kothay jachho": ["কোথায় যাচ্ছো?", "কোথায় যাচ্ছিস?"],
+    "kobe": ["কবে", "কখন", "কবে আসবে?"],
+    "keno": ["কেন", "কেনো", "কেন এমন?"],
+
+    # Verbs
+    "jao": ["যাও", "যাচ্ছো", "যাচ্ছিস"],
+    "jaite": ["যেতে", "যাইতে"],
+    "ashcho": ["আসছো", "আসছিস"],
+    "aso": ["আসো", "এসো", "আসতে"],
+    "korbo": ["করবো", "করব", "করবো না"],
+    "korchi": ["করছি", "করিতেছি"],
+    "khabo": ["খাবো", "খাব", "খাইব"],
+    "khaccho": ["খাচ্ছো", "খাচ্ছিস"],
+
+    # Common short phrases
+    "valo acho": ["ভালো আছো?", "ভালো আছেন?"],
+    "ami tomake": ["আমি তোমাকে", "আমি তোমায়"],
+    "ami chai": ["আমি চাই", "আমি চাচ্ছি"],
+    "onek dhonnobad": ["অনেক ধন্যবাদ", "অসংখ্য ধন্যবাদ"],
+    "onek bhalo": ["অনেক ভালো", "অনেক ভালবাসা"],
+    "onek din": ["অনেকদিন", "অনেক দিন ধরে"],
+
+    # Time-related
+    "aj": ["আজ", "আজকে"],
+    "akal": ["আগামীকাল", "আগামিকাল"],
+    "kal": ["কাল", "গতকাল", "আগামীকাল"],
+    "sokal": ["সকাল", "সকালে"],
+    "dupure": ["দুপুরে", "দুপুর"],
+    "rattir": ["রাত", "রাত্রি", "রাতে"],
+    "shokal": ["শকাল", "শকালে"],
+
+    # Love & Relationships
+    "prem": ["প্রেম", "প্রেমিক", "প্রেমিকা"],
+    "bondhu": ["বন্ধু", "বন্ধুরা", "বন্ধুটি"],
+    "biye": ["বিয়ে", "বিবাহ", "বিবাহিত"],
+    "bou": ["বউ", "স্ত্রী", "ঘরওয়ালি"],
+    "shami": ["স্বামী", "শামী"],
+    "mey": ["মেয়ে", "মেয়েটি", "মেয়েরা"],
+    "chele": ["ছেলে", "ছেলেটি", "ছেলেরা"],
+}
+
+        key = text.lower()
+        if key in word_suggestions:
+            suggestions = word_suggestions[key]
+        else:
+       
+            suggestions = [base]
+    
+        return suggestions
+        
+        
+    def update_preedit(self):
+        if self.preedit_string:
+        # Get suggestions
+            suggestions = self.get_suggestions(self.preedit_string)
+        
+        # Clear old lookup table
+            self.lookup_table.clear()
+        
+        # Add suggestions to lookup table
+            for i, word in enumerate(suggestions):
+                if i >= 10:  # Max 10
+                    break
+            # Create IBus.Text for suggestion
+                text = IBus.Text.new_from_string(word)
+                self.lookup_table.append_candidate(text)
+        
+        # Show preedit
+            bangla_text = phonetic_to_bangla(self.preedit_string)
+            preedit_text = IBus.Text.new_from_string(bangla_text)
+            self.update_preedit_text(preedit_text, len(bangla_text), True)
+        
+        # Show lookup table if suggestions exist
+            if len(suggestions) > 1:
+                self.update_lookup_table(self.lookup_table, True)
+            else:
+                self.hide_lookup_table()
+        else:
+            self.hide_preedit_text()
+            self.hide_lookup_table()
+
+
+
+    def do_focus_out(self):
+        if self.preedit_string:
+            self.commit_text(IBus.Text.new_from_string(
+                phonetic_to_bangla(self.preedit_string)))
+            self.preedit_string = ""
+            self.update_preedit()
+            self.hide_lookup_table() 
+
+    def do_reset(self):
+        self.preedit_string = ""
+        self.hide_preedit_text()
+        self.hide_lookup_table() 
+
+
+class IMApp:
+    def __init__(self):
+        self.mainloop = GLib.MainLoop()
+        
+    def run(self):
+        bus = IBus.Bus()
+        if not bus.is_connected():
+            print("Failed to connect to IBus", file=sys.stderr)
+            return False
+
+        factory = IBus.Factory.new(bus.get_connection())
+        factory.add_engine("bangla-avro", GObject.type_from_name("BanglaEngine"))
+        bus.request_name("org.freedesktop.IBus.BanglaAvro", 0)
+
+        print("Bangla Avro IME started")
+        try:
+            self.mainloop.run()
+        except KeyboardInterrupt:
+            pass
+        return True
+
+
+if __name__ == "__main__":
+    GObject.type_register(BanglaEngine)
+    app = IMApp()
+    app.run()
